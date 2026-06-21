@@ -4,7 +4,6 @@
 <head>
 
 <meta charset="UTF-8">
-
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <title>MoneyAssure</title>
@@ -13,24 +12,180 @@
 
 <style>
 
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+}
+
 body{
-background:#0b0d10;
-color:white;
+
+background:#020817;
+color:#ffffff;
+font-family:Arial,Helvetica,sans-serif;
+
 }
 
 .navbar{
-background:#111827;
+
+background:#061327;
+border-bottom:1px solid #1e293b;
+padding:18px 0;
+
+}
+
+.navbar-brand{
+
+display:flex;
+align-items:center;
+gap:15px;
+font-size:34px;
+font-weight:bold;
+color:white !important;
+text-decoration:none;
+
+}
+
+.navbar-brand img{
+
+width:46px;
+height:46px;
+border-radius:8px;
+
+}
+
+.brand-text{
+
+display:flex;
+flex-direction:column;
+line-height:1.2;
+
+}
+
+.brand-text span:first-child{
+
+font-size:20px;
+font-weight:bold;
+color:white;
+
+}
+
+.brand-text span:last-child{
+
+font-size:14px;
+color:#94a3b8;
+
 }
 
 .card{
-background:#1f2937;
+
+background:#0f172a;
+border:1px solid #1e293b;
+border-radius:18px;
 color:white;
-border-radius:15px;
+box-shadow:0 15px 35px rgba(0,0,0,.45);
+
 }
 
-.btn-primary{
-background:#00bcd4;
+h1,h2,h3,h4,h5,h6{
+
+color:white !important;
+font-weight:700;
+
+}
+
+p{
+
+color:#cbd5e1;
+
+}
+
+label{
+
+color:white !important;
+font-weight:600;
+
+}
+
+.form-control{
+
+background:#111827 !important;
+color:white !important;
+border:1px solid #334155 !important;
+height:50px;
+border-radius:10px;
+
+}
+
+.form-control::placeholder{
+
+color:#94a3b8;
+
+}
+
+.form-control:focus{
+
+background:#111827 !important;
+color:white !important;
+border-color:#22c55e !important;
+box-shadow:0 0 12px rgba(34,197,94,.30);
+
+}
+
+.btn{
+
+border-radius:10px;
+font-weight:bold;
+
+}
+
+.btn-success{
+
+background:#16a34a;
 border:none;
+
+}
+
+.btn-success:hover{
+
+background:#15803d;
+
+}
+
+.btn-warning{
+
+background:#facc15;
+border:none;
+color:black;
+
+}
+
+.btn-warning:hover{
+
+background:#eab308;
+
+}
+
+.btn-outline-light{
+
+border-radius:10px;
+
+}
+
+.alert{
+
+border-radius:10px;
+
+}
+
+footer{
+
+margin-top:70px;
+padding:30px;
+text-align:center;
+color:#94a3b8;
+border-top:1px solid #1e293b;
+
 }
 
 </style>
@@ -39,19 +194,44 @@ border:none;
 
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-dark">
+<nav class="navbar navbar-expand-lg">
 
 <div class="container">
 
-<a class="navbar-brand" href="/">MoneyAssure</a>
+<a class="navbar-brand" href="/">
+
+
+<img src="{{ url_for('static', filename='images/logo.png') }}" alt="MoneyAssure Logo">
+
+<div class="brand-text">
+
+<span>MoneyAssure</span>
+
+<span>AI Trading Platform</span>
+
+</div>
+
+</a>
 
 <div>
 
-<a href="/" class="btn btn-outline-light btn-sm">Home</a>
+<a href="/" class="btn btn-outline-light me-2">
 
-<a href="/login" class="btn btn-warning btn-sm">Login</a>
+Home
 
-<a href="/register" class="btn btn-success btn-sm">Register</a>
+</a>
+
+<a href="/login" class="btn btn-warning me-2">
+
+Login
+
+</a>
+
+<a href="/register" class="btn btn-success">
+
+Register
+
+</a>
 
 </div>
 
@@ -62,6 +242,7 @@ border:none;
 <div class="container mt-5">
 
 {% with messages = get_flashed_messages(with_categories=true) %}
+
 {% if messages %}
 
 {% for category,message in messages %}
@@ -75,6 +256,7 @@ border:none;
 {% endfor %}
 
 {% endif %}
+
 {% endwith %}
 
 {% block content %}
@@ -82,6 +264,12 @@ border:none;
 {% endblock %}
 
 </div>
+
+<footer>
+
+© 2026 MoneyAssure | AI Powered Trading Platform
+
+</footer>
 
 </body>
 

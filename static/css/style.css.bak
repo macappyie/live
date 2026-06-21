@@ -1,0 +1,112 @@
+body{
+
+background:#07111F;
+
+color:white;
+
+font-family:Segoe UI,sans-serif;
+
+}
+
+.custom-navbar{
+
+background:#0B1220;
+
+border-bottom:1px solid rgba(255,255,255,.08);
+
+}
+
+.card{
+
+background:#111827;
+
+border:none;
+
+border-radius:20px;
+
+box-shadow:0 10px 35px rgba(0,0,0,.35);
+
+}
+
+.form-control{
+
+background:#0d1728;
+
+border:1px solid #22324a;
+
+color:white;
+
+height:50px;
+
+}
+
+.form-control:focus{
+
+background:#0d1728;
+
+color:white;
+
+border-color:#00d4ff;
+
+box-shadow:0 0 12px rgba(0,212,255,.4);
+
+}
+
+.btn-info{
+
+background:#00D4FF;
+
+border:none;
+
+}
+
+.btn-info:hover{
+
+background:#00b7df;
+
+transform:translateY(-2px);
+
+transition:.3s;
+
+}
+
+.btn-success{
+
+background:linear-gradient(90deg,#00c853,#00e676);
+
+border:none;
+
+}
+
+.card:hover{
+
+transform:translateY(-5px);
+
+transition:.3s;
+
+}
+.min-vh-75{
+    min-height:75vh;
+}
+
+.display-4{
+    color:#00D4FF;
+    font-weight:700;
+}
+
+.lead{
+    color:#b9c2cf !important;
+}
+
+a{
+    color:#00D4FF;
+    text-decoration:none;
+}
+
+a:hover{
+    color:white;
+}
+
+.card{
+    backdrop-filter:blur(12px);
+}

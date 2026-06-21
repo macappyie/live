@@ -2,60 +2,110 @@
 
 {% block content %}
 
-<div class="row justify-content-center">
+<div class="row align-items-center min-vh-75">
 
-<div class="col-md-5">
+    <div class="col-lg-6 mb-5">
 
-<div class="card p-4">
+        <h1 class="display-4 fw-bold">
+            AI Powered Trading Intelligence
+        </h1>
 
-<h2 class="text-center mb-4">
+        <p class="lead text-light mt-4">
+            Live Scanner, Smart Money Detection,
+            Options Analysis, Breakout Signals
+            and Premium Trading Journal.
+        </p>
 
-Login
+        <div class="mt-5">
 
-</h2>
+            <div class="mb-3">
+                ✅ Live Scanner
+            </div>
 
-<form method="POST">
+            <div class="mb-3">
+                ✅ AI Signals
+            </div>
 
-<div class="mb-3">
+            <div class="mb-3">
+                ✅ Telegram Alerts
+            </div>
 
-<label>Email</label>
+            <div class="mb-3">
+                ✅ Trading Journal
+            </div>
 
-<input
-type="email"
-name="email"
-class="form-control"
-required>
+        </div>
 
-</div>
-
-<div class="mb-3">
-
-<label>Password</label>
-
-<input
-type="password"
-name="password"
-class="form-control"
-required>
-
-</div>
+    </div>
 
 
-<div class="text-end mb-3">
-    <a href="/forgot-password">Forgot Password?</a>
-</div>
+    <div class="col-lg-6">
 
-<button class="btn btn-primary w-100">
+        <div class="card p-5">
 
-Login
+            <h2 class="text-center mb-4">
+                Login
+            </h2>
 
-</button>
+            <form method="POST">
 
-</form>
+                <div class="mb-3">
 
-</div>
+                    <label>Email</label>
 
-</div>
+                    <input
+                        type="email"
+                        name="email"
+                        class="form-control"
+                        required>
+
+                </div>
+
+                <div class="mb-3">
+
+                    <label>Password</label>
+
+                    <input
+                        type="password"
+                        name="password"
+                        class="form-control"
+                        required>
+
+                </div>
+
+                <div class="text-end mb-4">
+
+                    <a href="/forgot-password">
+                        Forgot Password?
+                    </a>
+
+                </div>
+
+                <button class="btn btn-info w-100">
+
+                    Login
+
+                </button>
+
+            </form>
+
+            <hr>
+
+            <div class="text-center">
+
+                Don't have an account?
+
+                <a href="/register">
+
+                    Register
+
+                </a>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </div>
 

@@ -2,17 +2,89 @@
 
 {% block content %}
 
-<div class="row justify-content-center">
+<style>
 
-<div class="col-md-5">
+.register-card{
+    background:#0f172a;
+    border:1px solid #1e293b;
+    border-radius:18px;
+    padding:35px;
+    box-shadow:0 15px 35px rgba(0,0,0,.45);
+}
 
-<div class="card p-4">
+.register-card h2{
+    color:#ffffff;
+    font-weight:700;
+}
 
-<h2 class="text-center mb-4">
+.register-card p{
+    color:#94a3b8;
+}
 
-Register
+label{
+    color:#ffffff;
+    font-weight:600;
+    margin-bottom:8px;
+}
 
-</h2>
+.form-control{
+    background:#111827;
+    border:1px solid #334155;
+    color:#ffffff;
+    height:50px;
+    border-radius:10px;
+}
+
+.form-control::placeholder{
+    color:#94a3b8;
+}
+
+.form-control:focus{
+    background:#111827;
+    color:white;
+    border-color:#22c55e;
+    box-shadow:0 0 10px rgba(34,197,94,.35);
+}
+
+.btn-register{
+    height:52px;
+    border-radius:10px;
+    font-size:18px;
+    font-weight:bold;
+    background:#22c55e;
+    border:none;
+    transition:.3s;
+}
+
+.btn-register:hover{
+    background:#16a34a;
+    transform:translateY(-2px);
+}
+
+.login-link{
+    color:#94a3b8;
+    text-decoration:none;
+}
+
+.login-link:hover{
+    color:white;
+}
+
+</style>
+
+<div class="row justify-content-center mt-5">
+
+<div class="col-lg-5 col-md-7">
+
+<div class="register-card">
+
+<div class="text-center mb-4">
+
+<h2>Create Account</h2>
+
+<p>Create your MoneyAssure account</p>
+
+</div>
 
 <form method="POST">
 
@@ -24,35 +96,38 @@ Register
 type="text"
 name="full_name"
 class="form-control"
+placeholder="Enter your full name"
 required>
 
 </div>
 
 <div class="mb-3">
 
-<label>Email</label>
+<label>Email Address</label>
 
 <input
 type="email"
 name="email"
 class="form-control"
+placeholder="Enter your email"
 required>
 
 </div>
 
 <div class="mb-3">
 
-<label>Mobile</label>
+<label>Mobile Number</label>
 
 <input
 type="text"
 name="mobile"
 class="form-control"
+placeholder="Enter mobile number"
 required>
 
 </div>
 
-<div class="mb-3">
+<div class="mb-4">
 
 <label>Password</label>
 
@@ -60,17 +135,34 @@ required>
 type="password"
 name="password"
 class="form-control"
+placeholder="Create password"
 required>
 
 </div>
 
-<button class="btn btn-success w-100">
+<button
+type="submit"
+class="btn btn-register w-100">
 
 Create Account
 
 </button>
 
 </form>
+
+<div class="text-center mt-4">
+
+Already have an account?
+
+<a
+href="/login"
+class="login-link">
+
+Login
+
+</a>
+
+</div>
 
 </div>
 
@@ -79,3 +171,4 @@ Create Account
 </div>
 
 {% endblock %}
+
