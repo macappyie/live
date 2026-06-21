@@ -1,0 +1,9 @@
+from flask import Blueprint
+
+dashboard = Blueprint("dashboard", __name__)
+
+
+@dashboard.route("/dashboard")
+def home():
+
+    return "<h1>Dashboard</h1>"

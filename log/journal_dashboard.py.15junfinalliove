@@ -1,0 +1,591 @@
+from flask import Flask, render_template_string
+from kiteconnect import KiteConnect
+import pandas as pd
+import datetime as dt
+import pytz
+
+# ---------- CONFIG ----------
+API_KEY = "awh2j04pcd83zfvq"
+kite = KiteConnect(api_key=API_KEY)
+
+with open("access_token.txt") as f:
+    kite.set_access_token(f.read().strip())
+
+IST = pytz.timezone("Asia/Kolkata")
+
+with open("watchlist.txt") as f:
+    WATCHLIST = [f"NSE:{x.strip()}" for x in f if x.strip()]
+
+INS = pd.read_csv("instruments.csv", low_memory=False)
+INS["expiry"] = pd.to_datetime(INS["expiry"], errors="coerce")
+
+
+# ✅ FREEZE STORAGE
+FROZEN_ROWS = {}
+
+# ============================================================
+# ✅ 9:30 SIGNAL LOGIC (FINAL)
+# ============================================================
+
+def get_930_signal(symbol, side):
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+
+        now = dt.datetime.now(IST)
+        from_dt = IST.localize(dt.datetime.combine(now.date(), dt.time(9, 15)))
+        to_dt   = IST.localize(dt.datetime.combine(now.date(), dt.time(9, 35)))
+
+        df = pd.DataFrame(kite.historical_data(token, from_dt, to_dt, "5minute"))
+        if df.empty:
+            return None
+
+        df["date"] = pd.to_datetime(df["date"])
+        df.set_index("date", inplace=True)
+
+        # ✅ Opening 3 candles
+        pre = df[(df.index.hour == 9) & (df.index.minute.isin([15, 20, 25]))]
+        if pre.empty:
+            return None
+
+        # ✅ 9:30 candle
+        c930 = df[(df.index.hour == 9) & (df.index.minute == 30)]
+        if c930.empty:
+            return None
+
+        # ===================== GAINER =====================
+        if side == "GAINER":
+            range_high = pre["high"].max()
+            c930_high = c930["high"].iloc[0]
+
+            if c930_high < range_high:
+                return round(c930_high, 2)
+
+        # ===================== LOSER =====================
+        elif side == "LOSER":
+            range_high = pre["high"].max()
+            c930_high = c930["high"].iloc[0]
+
+            if c930_high < range_high:
+                return round(c930_high, 2)
+
+        return None
+
+    except:
+        return None
+
+
+# ============================================================
+# AFTER 9:30 HIGH
+# ============================================================
+
+def get_after_930_high(symbol):
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+        now = dt.datetime.now(IST)
+
+        from_dt = IST.localize(dt.datetime.combine(now.date(), dt.time(9,15)))
+
+        df = pd.DataFrame(kite.historical_data(token, from_dt, now, "5minute"))
+        if df.empty:
+            return None
+
+        df["date"] = pd.to_datetime(df["date"])
+        df.set_index("date", inplace=True)
+
+        c = df[(df.index.hour == 9) & (df.index.minute == 30)]
+        if c.empty:
+            return None
+
+        after = df[df.index > c.index[0]]
+
+        return round(after["high"].max(), 2) if not after.empty else None
+
+    except:
+        return None
+# ============================================================
+# TARGET HIT CANDLE TIME (5 MIN)
+# ============================================================
+
+def get_target_hit_time(symbol, target):
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+        now = dt.datetime.now(IST)
+
+        from_dt = IST.localize(dt.datetime.combine(now.date(), dt.time(9,15)))
+
+        df = pd.DataFrame(kite.historical_data(token, from_dt, now, "5minute"))
+        if df.empty:
+            return "-"
+
+        df["date"] = pd.to_datetime(df["date"])
+
+        for _, row in df.iterrows():
+            if row["high"] >= target:
+                return row["date"].strftime("%H:%M")
+
+        return "-"
+
+    except:
+        return "-"
+
+
+# ========================================
+# ============================================================
+# BUY HIT TIME (5 MIN CANDLE)
+# ============================================================
+
+def get_buy_hit_time(symbol, buy_price):
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+        now = dt.datetime.now(IST)
+
+        from_dt = IST.localize(dt.datetime.combine(now.date(), dt.time(9,15)))
+
+        df = pd.DataFrame(kite.historical_data(token, from_dt, now, "5minute"))
+        if df.empty:
+            return "-"
+
+        df["date"] = pd.to_datetime(df["date"])
+
+        # ✅ 9:30 candle find करो
+        c930 = df[(df["date"].dt.hour == 9) & (df["date"].dt.minute == 30)]
+        if c930.empty:
+            return "-"
+
+        c930_time = c930.iloc[0]["date"]
+
+        # ✅ सिर्फ 9:30 के बाद वाली candle
+        after = df[df["date"] > c930_time]
+
+        # ✅ breakout check
+        for _, row in after.iterrows():
+            if row["high"] >= buy_price:
+                return row["date"].strftime("%H:%M")
+
+        return "-"
+
+    except:
+        return "-"
+# ==================================================
+
+# ============================================================
+# OPTION SELECTION
+# ============================================================
+
+def get_option(stock, opt_type, ref_price):
+    try:
+        today = dt.date.today()
+
+        df = INS[
+            (INS["name"] == stock) &
+            (INS["segment"] == "NFO-OPT") &
+            (INS["instrument_type"] == opt_type) &
+            (INS["expiry"].dt.date >= today)
+        ]
+
+        if df.empty:
+            return None, 0
+
+        df = df.sort_values("expiry")
+        df["diff"] = abs(df["strike"] - ref_price)
+
+        atm = df.sort_values("diff").iloc[0]
+
+        return f"NFO:{atm['tradingsymbol']}", int(atm["lot_size"])
+
+    except:
+        return None, 0
+
+
+# ============================================================
+# MAIN ENGINE
+# ============================================================
+
+
+def generate_rows():
+    global FROZEN_ROWS
+
+    rows = []
+    quotes = kite.quote(WATCHLIST)
+
+    gainer = loser = sideways = 0
+
+    # ✅ COUNTERS
+    total = t_inv = t_profit = t_max = 0
+    target_hit = sl_hit = active = 0
+    no_trade_count = 0
+
+    # ================================
+    # ✅ UNLIMITED STOCK LOOP (REMOVED TOP 25)
+    # ================================
+    for s in WATCHLIST:
+        try:
+            q = quotes[s]
+            stock = s.replace("NSE:", "")
+
+            ltp = q["last_price"]
+            prev = q["ohlc"]["close"]
+
+            change = ((ltp - prev) / prev) * 100
+
+            if change > 0:
+                gainer += 1
+                side = "GAINER"
+            elif change < 0:
+                loser += 1
+                side = "LOSER"
+            else:
+                sideways += 1
+                side = "SIDE"
+
+
+            # ✅ ADD THIS HERE
+            sentiment = "BULLISH" if gainer > loser else "BEARISH" if loser > gainer else "SIDEWAYS"
+
+
+            # ============================================
+            # ✅ FREEZE BLOCK (SMART FREEZE + LIVE UPDATE)
+            # ============================================
+            if stock in FROZEN_ROWS:
+                frozen = FROZEN_ROWS[stock]
+
+                option = "NFO:" + frozen["option_name"]
+
+                try:
+                    current = kite.ltp(option)[option]["last_price"]
+                except:
+                    current = frozen["current_price"]
+
+                high = get_after_930_high(option) or frozen["todays_high"]
+
+                buy = frozen["buy_price"]
+                qty = frozen["qty"]
+                sl = frozen["sl_price"]
+
+                # ✅ ADDED: LIVE CALCULATION
+                current_pnl = round((current - buy) * qty, 2)
+                max_profit = round((high - buy) * qty, 2)
+                percent_move = round(((high - buy) / buy) * 100, 2) if buy > 0 else 0
+
+                # ✅ ADDED: MAX LOSS CALC
+                max_loss = round(-((buy - sl) * qty), 2)
+
+                # ✅ UPDATE VALUES
+                frozen["current_price"] = round(current, 2)
+                frozen["current_pnl"] = current_pnl
+                frozen["max_profit"] = max_profit
+                frozen["todays_high"] = round(high, 2)
+                frozen["percentage"] = percent_move
+                frozen["max_loss"] = max_loss
+
+                # ✅ ADDED: prevent target time loss
+                frozen["target_hit_time"] = frozen.get("target_hit_time", "-")
+
+                rows.append(frozen)
+
+                # ✅ COUNTER UPDATE
+                if frozen["result"] == "TARGET HIT":
+                    target_hit += 1
+                    t_inv += frozen["investment"]
+                    t_profit += frozen["net_profit"]
+                    t_max += frozen["max_profit"]
+
+                elif frozen["result"] == "SL HIT":
+                    sl_hit += 1
+
+                elif frozen["result"] == "ACTIVE":
+                    active += 1
+
+                continue
+
+            # ============================================
+            # ✅ NORMAL LOGIC
+            # ============================================
+            stock_930 = get_930_signal(f"NSE:{stock}", side)
+
+            if not stock_930:
+                no_trade_count += 1
+                rows.append({
+                    "stock_name": stock,
+                    "LTP": round(ltp, 2),
+                    "change_percent": round(change, 2),
+                    "gainer_loser": side,
+                    "result": "NO TRADE"
+                })
+                continue
+
+            # ✅ OPTION SELECT
+            opt_type = "CE" if side == "GAINER" else "PE"
+            option, qty = get_option(stock, opt_type, stock_930)
+
+            if not option:
+                continue
+
+            current = kite.ltp(option)[option]["last_price"]
+            buy = get_930_signal(option, side)
+
+            if not buy:
+                continue
+
+            high = get_after_930_high(option) or 0
+
+            # ✅ PENDING
+            if high < buy:
+                rows.append({
+                    "stock_name": stock,
+                    "option_name": option.replace("NFO:", ""),
+                    "current_price": round(current, 2),
+                    "buy_price": round(buy, 2),
+                    "result": "PENDING"
+                })
+                continue
+
+            # ============================================
+            # ✅ TRADE CALCULATIONS
+            # ============================================
+
+            sl = round(buy * 0.85, 2)
+            target = round(buy * 1.3, 2)
+
+            # ✅ ADDED
+            max_loss = round(-((buy - sl) * qty), 2)
+
+            investment = round(buy * qty, 2)
+            total += investment
+
+            net_profit = round((target - buy) * qty, 2)
+            max_profit = round((high - buy) * qty, 2)
+            current_pnl = round((current - buy) * qty, 2)
+
+            percent_move = round(((high - buy) / buy) * 100, 2)
+
+            # ✅ ADDED DEFAULT
+            target_time = "-"
+
+            # ✅ RESULT LOGIC
+            if high >= target:
+                result = "TARGET HIT"
+
+                # ✅ ADDED target hit time
+                target_time = get_target_hit_time(option, target)
+
+                target_hit += 1
+                t_inv += investment
+                t_profit += net_profit
+                t_max += max_profit
+
+            elif current <= sl:
+                result = "SL HIT"
+                sl_hit += 1
+
+            else:
+                result = "ACTIVE"
+                active += 1
+
+            # ============================================
+            # ✅ FINAL ROW
+            # ============================================
+            row = {
+                "buy_time": get_buy_hit_time(option, buy),
+                "target_hit_time": target_time,   # ✅ ADDED
+                "stock_name": stock,
+                "LTP": round(ltp, 2),
+                "change_percent": round(change, 2),
+                "gainer_loser": side,
+                "option_name": option.replace("NFO:", ""),
+                "current_price": round(current, 2),
+                "buy_price": round(buy, 2),
+                "qty": qty,
+                "investment": investment,
+                "sl_price": sl,
+                "max_loss": max_loss,             # ✅ ADDED
+                "target_price": target,
+                "net_profit": net_profit,
+                "current_pnl": current_pnl,
+                "max_profit": max_profit,
+                "todays_high": round(high, 2),
+                "percentage": percent_move,
+                "result": result
+            }
+
+            rows.append(row)
+
+            # ✅ FREEZE STORE
+            if result in ["ACTIVE", "TARGET HIT", "SL HIT"]:
+                FROZEN_ROWS[stock] = row
+
+        except:
+            pass
+
+    total_trades = target_hit + sl_hit + active
+    win_rate = (target_hit / total_trades * 100) if total_trades > 0 else 0
+
+    # ✅ ADDED SORT HIGH → LOW
+    rows = sorted(
+        rows,
+        key=lambda x: x.get("change_percent", 0),
+        reverse=True
+    )
+
+    return rows, total, t_inv, t_profit, t_max, gainer, loser, sideways, sentiment, total_trades, target_hit, sl_hit, active, win_rate, 0, 0, no_trade_count
+
+
+# ============================================================
+# UI
+# ============================================================
+
+# ---------- UI (UNCHANGED) ----------
+HTML = """
+<html>
+<head>
+<meta http-equiv="refresh" content="3">
+<style>
+body{background:#000;color:#fff;font-family:Arial;}
+
+.center{text-align:center;margin:20px;}
+
+.flash-green{background:#006400;animation:blinkGreen 1s infinite;}
+.flash-red{background:#8b0000;animation:blinkRed 1s infinite;}
+
+.flash-blue{
+    color:white;
+    background:#003366;
+    animation:blinkBlue 1s infinite;
+}
+
+@keyframes blinkBlue{
+    0%{background:#003366;}
+    50%{background:#00bfff;}
+    100%{background:#003366;}
+}
+
+.highlight-col{background-color:#002a34;color:#00ffff;font-weight:bold;}
+
+/*th{background:#001f2b;color:#00ffff;border-bottom:2px solid #00ffff;}*/
+
+th{
+    background:#ffffff;      /* white background */
+    color:#000000;           /* black text */
+    font-weight:bold;        /* bold text */
+    border-bottom:2px solid #000;
+}
+
+@keyframes blinkGreen{0%{background:#006400;}50%{background:#00ff00;}100%{background:#006400;}}
+@keyframes blinkRed{0%{background:#8b0000;}50%{background:#ff0000;}100%{background:#8b0000;}}
+
+table{width:100%;border-collapse:collapse;}
+td,th{border:1px solid #333;padding:5px;}
+</style>
+</head>
+
+<body>
+
+<div class="center">
+<h1 style="color:#00ffff;">MONEY ASSURE DASHBOARD</h1>
+<h3>GAINERS: {{g}} | LOSERS: {{l}} | SIDEWAYS: {{s}}</h3>
+<h2 style="color:{% if sentiment=='BULLISH'%}lime{% elif sentiment=='BEARISH'%}red{% else %}yellow{% endif %}">
+MARKET SENTIMENT: {{sentiment}}
+</h2>
+</div>
+
+<h1 style="color:#00ffcc;">TOTAL INVESTED: ₹{{total}}</h1>
+<h2 style="color:yellow;">
+NET PROFIT: ₹{{t_profit}} | INVESTED: ₹{{t_inv}} 
+</h2>
+<h2 style="color:magenta;">MAX PROFIT: ₹{{t_max}}</h2>
+
+
+<div style="position:absolute;top:140px;right:30px;text-align:right;">
+
+<div style="font-size:28px;font-weight:bold;">
+TOTAL TRADES: {{total_trades}}
+</div>
+
+<div style="font-size:26px;font-weight:bold;color:#00ff00;">
+TARGET HIT: {{target_hit}}
+</div>
+
+<div style="font-size:26px;font-weight:bold;color:#ff0000;">
+SL HIT: {{sl_hit}}
+</div>
+
+<div style="font-size:26px;font-weight:bold;color:#ffff00;">
+ACTIVE: {{active}}
+</div>
+
+<div style="font-size:26px;font-weight:bold;">
+NO TRADE: {{no_trade}}
+</div>
+
+<div style="font-size:30px;font-weight:bold;color:#ffcc00;">
+WIN RATE: {{win_rate}}%
+</div>
+
+</div>
+
+<table>
+<tr>{% for c in cols %}<th>{{c}}</th>{% endfor %}</tr>
+
+{% for r in rows %}
+<tr class="
+{% if 'TARGET HIT' in r.result %}
+    flash-green
+{% elif 'SL HIT' in r.result %}
+    flash-red
+{% elif 'ACTIVE' in r.result %}
+    flash-blue
+{% endif %}
+">
+{% for c in cols %}
+<td class="{% if c=='current_pnl' or c=='max_profit' %}highlight-col{% endif %}">{{r[c]}}</td>
+{% endfor %}
+</tr>
+{% endfor %}
+</table>
+
+</body>
+</html>
+"""
+
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+
+    cols = [
+        "buy_time","target_hit_time","stock_name","LTP","change_percent","gainer_loser","option_name",
+        "current_price","buy_price","qty","investment",
+        "sl_price","max_loss","target_price",
+        "net_profit","current_pnl","max_profit",
+        #"todays_high","result"
+        "todays_high","percentage","result"
+    ]
+
+    #data,total,t_inv,t_profit,t_max,g,l,s,sent,total_trades,target_hit,sl_hit,active,win_rate = generate_rows()
+    #data,total,t_inv,t_profit,t_max,g,l,s,sent,total_trades,target_hit,sl_hit,active,win_rate,triggered,pending,no_trade = generate_rows()
+    #data,total,t_inv,t_profit,t_max,g,l,s,sent,total_trades,target_hit,sl_hit,active,win_rate,*rest = generate_rows()
+    data,total,t_inv,t_profit,t_max,g,l,s,sent,total_trades,target_hit,sl_hit,active,win_rate,*rest = generate_rows()
+    no_trade = rest[-1]
+
+    return render_template_string(
+        HTML,
+        rows=data, 
+        cols=cols,
+        total=round(total,2),
+        t_inv=round(t_inv,2),
+        t_profit=round(t_profit,2),
+        t_max=round(t_max,2),
+
+
+        g=g,l=l,s=s,
+        sentiment=sent,
+        total_trades=total_trades,
+        target_hit=target_hit,
+        sl_hit=sl_hit,
+        active=active,
+        no_trade=no_trade,   # ✅ ADD THIS LINE
+        win_rate=round(win_rate,2)
+    )
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5003)

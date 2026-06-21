@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="container mt-4">
+
+<h2>Pending Payments</h2>
+
+<table border="1" cellpadding="10" width="100%">
+
+<tr>
+
+<th>User ID</th>
+
+<th>Amount</th>
+
+<th>Transaction ID</th>
+
+<th>Status</th>
+
+<th>Action</th>
+
+</tr>
+
+{% for p in payments %}
+
+<tr>
+
+<td>{{ p.user_id }}</td>
+
+<td>₹{{ p.amount }}</td>
+
+<td>{{ p.transaction_id }}</td>
+
+<td>{{ p.status }}</td>
+
+<td>
+
+{% if p.status=="Pending" %}
+
+<a href="/admin/approve/{{ p.id }}">
+Approve
+</a>
+
+|
+
+<a href="/admin/reject/{{ p.id }}">
+Reject
+</a>
+
+{% else %}
+
+Done
+
+{% endif %}
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</table>
+
+</div>
+
+{% endblock %}

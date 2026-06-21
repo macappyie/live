@@ -1,0 +1,15 @@
+from flask import Blueprint, render_template
+from flask_login import login_required, current_user
+
+payment = Blueprint("payment", __name__)
+
+
+@payment.route("/payment")
+@login_required
+def payment_page():
+
+    return render_template(
+        "payment.html",
+        user=current_user,
+        amount=2000
+    )

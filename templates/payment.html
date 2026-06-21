@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div style="max-width:700px;margin:40px auto;background:#1d2a44;padding:40px;border-radius:10px;color:white;text-align:center;">
+
+    <h1>MoneyAssure Premium</h1>
+
+    <hr>
+
+    <h2>Subscription Fee : ₹ {{ amount }}</h2>
+
+    <p>Scan QR Code and Pay</p>
+
+    <img
+        src="{{ url_for('static', filename='images/qr.png') }}"
+        width="300"
+        style="background:white;padding:10px;border-radius:10px;"
+    >
+
+    <br><br>
+
+    <h3>UPI ID</h3>
+
+    <input
+        type="text"
+        value="{{ upi }}"
+        readonly
+        style="
+        width:350px;
+        text-align:center;
+        font-size:18px;
+        padding:10px;
+        "
+    >
+
+    <br><br>
+
+    <form method="POST">
+
+        <input
+            type="text"
+            name="transaction_id"
+            placeholder="Enter UPI Transaction ID"
+            required
+            style="
+            width:350px;
+            padding:15px;
+            font-size:18px;
+            "
+        >
+
+        <br><br>
+
+        <button
+            type="submit"
+            style="
+            background:#28a745;
+            color:white;
+            border:none;
+            padding:15px 40px;
+            font-size:20px;
+            border-radius:8px;
+            cursor:pointer;
+            "
+        >
+            Submit Payment
+        </button>
+
+    </form>
+
+    <br>
+
+    <div style="color:yellow;font-size:18px;">
+        After payment, your account will be activated by Admin.
+    </div>
+
+</div>
+
+{% endblock %}

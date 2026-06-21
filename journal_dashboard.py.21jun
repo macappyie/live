@@ -1,0 +1,813 @@
+from flask import Flask, render_template_string
+from kiteconnect import KiteConnect
+import pandas as pd
+import datetime as dt
+import pytz
+
+# ---------- CONFIG ----------
+API_KEY = "awh2j04pcd83zfvq"
+kite = KiteConnect(api_key=API_KEY)
+
+with open("access_token.txt") as f:
+    kite.set_access_token(f.read().strip())
+
+IST = pytz.timezone("Asia/Kolkata")
+
+with open("watchlist.txt") as f:
+    WATCHLIST = [f"NSE:{x.strip()}" for x in f if x.strip()]
+
+INS = pd.read_csv("instruments.csv", low_memory=False)
+INS["expiry"] = pd.to_datetime(INS["expiry"], errors="coerce")
+
+
+# ✅ FREEZE STORAGE
+FROZEN_ROWS = {}
+
+# ============================================================
+# ✅ 9:30 SIGNAL LOGIC (FINAL)
+# ============================================================
+
+def get_930_signal(symbol, side):
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+
+        now = dt.datetime.now(IST)
+        from_dt = IST.localize(dt.datetime.combine(now.date(), dt.time(9, 15)))
+        to_dt   = IST.localize(dt.datetime.combine(now.date(), dt.time(9, 35)))
+
+        df = pd.DataFrame(kite.historical_data(token, from_dt, to_dt, "5minute"))
+        if df.empty:
+            return None
+
+        df["date"] = pd.to_datetime(df["date"])
+        df.set_index("date", inplace=True)
+
+        # ✅ Opening 3 candles
+        pre = df[(df.index.hour == 9) & (df.index.minute.isin([15, 20, 25]))]
+        if pre.empty:
+            return None
+
+        # ✅ 9:30 candle
+        c930 = df[(df.index.hour == 9) & (df.index.minute == 30)]
+        if c930.empty:
+            return None
+
+        # ===================== GAINER =====================
+        if side == "GAINER":
+            range_high = pre["high"].max()
+            c930_high = c930["high"].iloc[0]
+
+            if c930_high < range_high:
+                return round(c930_high + 1, 2)
+
+        # ===================== LOSER =====================
+        elif side == "LOSER":
+            range_high = pre["high"].max()
+            c930_high = c930["high"].iloc[0]
+
+            if c930_high < range_high:
+                return round(c930_high + 1, 2)
+
+        return None
+
+    except:
+        return None
+
+
+# ============================================================
+# AFTER 9:30 HIGH
+# ============================================================
+
+def get_after_930_high(symbol):
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+        now = dt.datetime.now(IST)
+
+        from_dt = IST.localize(dt.datetime.combine(now.date(), dt.time(9,15)))
+
+        df = pd.DataFrame(kite.historical_data(token, from_dt, now, "5minute"))
+        if df.empty:
+            return None
+
+        df["date"] = pd.to_datetime(df["date"])
+        df.set_index("date", inplace=True)
+
+        c = df[(df.index.hour == 9) & (df.index.minute == 30)]
+        if c.empty:
+            return None
+
+        after = df[df.index > c.index[0]]
+
+        return round(after["high"].max(), 2) if not after.empty else None
+
+    except:
+        return None
+# ============================================================
+# TARGET HIT CANDLE TIME (5 MIN)
+# ============================================================
+
+def get_target_hit_time(symbol, target):
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+        now = dt.datetime.now(IST)
+
+        from_dt = IST.localize(dt.datetime.combine(now.date(), dt.time(9,15)))
+
+        df = pd.DataFrame(kite.historical_data(token, from_dt, now, "5minute"))
+        if df.empty:
+            return "-"
+
+        df["date"] = pd.to_datetime(df["date"])
+
+        for _, row in df.iterrows():
+            if row["high"] >= target:
+                return row["date"].strftime("%H:%M")
+
+        return "-"
+
+    except:
+        return "-"
+
+
+# ========================================
+# ============================================================
+# BUY HIT TIME (5 MIN CANDLE)
+# ============================================================
+
+def get_buy_hit_time(symbol, buy_price):
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+        now = dt.datetime.now(IST)
+
+        from_dt = IST.localize(dt.datetime.combine(now.date(), dt.time(9,15)))
+
+        df = pd.DataFrame(kite.historical_data(token, from_dt, now, "5minute"))
+        if df.empty:
+            return "-"
+
+        df["date"] = pd.to_datetime(df["date"])
+
+        # ✅ 9:30 candle find करो
+        c930 = df[(df["date"].dt.hour == 9) & (df["date"].dt.minute == 30)]
+        if c930.empty:
+            return "-"
+
+        c930_time = c930.iloc[0]["date"]
+
+        # ✅ सिर्फ 9:30 के बाद वाली candle
+        after = df[df["date"] > c930_time]
+
+        # ✅ breakout check
+        for _, row in after.iterrows():
+            if row["high"] >= buy_price:
+                return row["date"].strftime("%H:%M")
+
+        return "-"
+
+    except:
+        return "-"
+# ==================================================
+
+# ============================================================
+# OPTION SELECTION
+# ============================================================
+
+def get_option(stock, opt_type, ref_price):
+    try:
+        today = dt.date.today()
+
+        df = INS[
+            (INS["name"] == stock) &
+            (INS["segment"] == "NFO-OPT") &
+            (INS["instrument_type"] == opt_type) &
+            (INS["expiry"].dt.date >= today)
+        ]
+
+        if df.empty:
+            return None, 0
+
+        df = df.sort_values("expiry")
+        df["diff"] = abs(df["strike"] - ref_price)
+
+        atm = df.sort_values("diff").iloc[0]
+
+        return f"NFO:{atm['tradingsymbol']}", int(atm["lot_size"])
+
+    except:
+        return None, 0
+
+
+# ============================================================
+# MAIN ENGINE
+# ============================================================
+
+def generate_rows():
+    global FROZEN_ROWS
+
+    rows = []
+    quotes = kite.quote(WATCHLIST)
+
+    temp = []
+    gainer = loser = sideways = 0
+    triggered_count = 0
+    pending_count = 0
+    no_trade_count = 0
+
+    for s in WATCHLIST:
+        try:
+            q = quotes[s]
+            stock = s.replace("NSE:", "")
+
+            ltp = q["last_price"]
+            prev = q["ohlc"]["close"]
+            open_price = q["ohlc"]["open"]
+
+            change = ((ltp - prev) / prev) * 100
+
+            # ✅ GAP CALCULATION
+            #gap_pct = ((open_price - prev) / prev) * 100
+
+            if change > 0:
+                gainer += 1
+                side = "GAINER"
+            elif change < 0:
+                loser += 1
+                side = "LOSER"
+            else:
+                sideways += 1
+                side = "SIDE"
+
+            temp.append({
+                "stock": stock,
+                "ltp": ltp,
+            #    "change": change,
+
+                "change": round(change, 2),
+
+                "gap": 0,
+                #"gap": gap_pct,
+                "side": side
+            })
+        except:
+            pass
+
+    # ✅ TOP 20
+#    gainers = sorted(temp, key=lambda x: x["change"], reverse=True)[:25]
+#    losers = sorted(temp, key=lambda x: x["change"])[:25]
+#    final = gainers + losers
+# ✅ TOP 25 GAINERS (HIGH → LOW)
+        gainers = sorted(
+            [x for x in temp if x["change"] > 0],
+            key=lambda x: x["change"],
+            reverse=True
+        )[:50]
+
+# ✅ TOP 25 LOSERS (BIGGEST LOSS → SMALLER LOSS)
+        losers = sorted(
+            [x for x in temp if x["change"] < 0],
+            key=lambda x: abs(x["change"]),
+            reverse=True
+        )[:50]
+        
+        final = gainers + losers
+
+    sentiment = "BULLISH" if gainer > loser else "BEARISH" if loser > gainer else "SIDEWAYS"
+
+    total = t_inv = t_profit = t_max = 0
+    target_hit = sl_hit = active = 0
+
+    for r in final:
+        try:
+            stock = r["stock"]
+
+# ✅ already freezed stock
+            #if stock in FROZEN_ROWS:
+             #   rows.append(FROZEN_ROWS[stock])
+              #  continue
+
+            side = r["side"]
+
+            # ✅ GAP TEXT
+            #gap = round(r["gap"], 2)
+            #if gap > 0:
+            #    gap_text = f"Gap Up {gap}%"
+            #else:
+            #    gap_text = f"Gap Down {gap}%"
+
+            # ✅ 1️⃣ STOCK 9:30 CHECK
+            stock_930 = get_930_signal(f"NSE:{stock}", side)
+
+            if not stock_930:
+                no_trade_count += 1   # ✅ yahan lagana hai
+                rows.append({
+                    "time": dt.datetime.now().strftime("%H:%M:%S"),
+                    "stock_name": stock,
+                    "LTP": round(r["ltp"], 2),
+                    "change_percent": r["change"],
+                    "gainer_loser": side,
+                    "option_name": "-",
+                    "current_price": "-",
+                    "buy_price": "-",
+                    "qty": "-",
+                    "investment": "-",
+                    "sl_price": "-",
+                    "max_loss": "-",
+                    "target_price": "-",
+                    "net_profit": "-",
+                    "current_pnl": "-",
+                    "max_profit": "-",
+                    "todays_high": "-",
+                    "percentage": "-",
+                    "result": "NO TRADE"
+                    #"result": f"{gap_text} | NO TRADE"
+                })
+                continue
+
+            # ✅ 2️⃣ OPTION SELECTION only if stock passed
+            opt_type = "CE" if side == "GAINER" else "PE"
+            option, qty = get_option(stock, opt_type, stock_930)
+
+            if not option or qty == 0:
+                continue
+
+            # ✅ OPTION PRICE
+            current = kite.ltp(option)[option]["last_price"]
+
+            # ✅ OPTION 9:30 BUY ENTRY
+            buy = get_930_signal(option, side)
+
+            if not buy or buy <= 0:
+                continue
+
+            high = get_after_930_high(option) or 0
+
+
+            # pehle count increase karo
+            pending_count += 1
+
+            # phir dictionary banao
+
+
+            # ✅ TRIGGER CHECK
+            if high < buy:
+                rows.append({
+                    "time": dt.datetime.now().strftime("%H:%M:%S"),
+                    "stock_name": stock,
+                    "LTP": round(r["ltp"], 2),
+                    "change_percent": r["change"],
+                    "gainer_loser": side,
+                    "option_name": option.replace("NFO:", ""),
+                    "current_price": round(current, 2),
+                    "buy_price": buy,
+                    "qty": qty,
+                    "investment": round(buy * qty, 2),
+                    "sl_price": "-",
+                    "max_loss": "-",
+                    "target_price": "-",
+                    "net_profit": "-",
+                    "current_pnl": "-",
+                    "max_profit": "-",
+                    "todays_high": high,
+                    "percentage": "-",
+                    "result": "PENDING"
+                    #"result": f"{gap_text} | PENDING"
+                })
+                continue
+
+            # ✅ FULL TRADE
+            sl = round(buy * 0.85, 2)
+            target = round(buy * 1.3, 2)
+
+            investment = buy * qty
+            total += investment
+
+            net_profit = (target - buy) * qty
+            max_profit = (high - buy) * qty
+            max_loss = -((buy - sl) * qty)
+            current_pnl = (current - buy) * qty
+            # ✅ % MOVE from BUY to TODAY HIGH
+            percent_move = round(((high - buy) / buy) * 100, 2) if buy > 0 else 0
+
+
+            # ✅ default
+            target_time = "-"
+
+#
+                # ✅ TARGET HIT (once hit → freeze)
+            if high >= target:
+                result = "TARGET HIT"
+                #result = f"{gap_text} | TARGET HIT"
+                #target_time = dt.datetime.now().strftime("%H:%M:%S")
+                target_time = get_target_hit_time(option, target)
+                target_hit += 1
+                t_inv += investment
+                t_profit += net_profit
+                t_max += max_profit
+
+            # ✅ SL HIT (only if target not hit)
+            elif current <= sl:
+                result = "SL HIT"
+                #result = f"{gap_text} | SL HIT"
+                sl_hit += 1
+
+            # ✅ ACTIVE
+            else:
+                result = "ACTIVE"
+                #result = f"{gap_text} | ACTIVE"
+                triggered_count += 1
+                active += 1
+
+            rows.append({
+                "buy_time": get_buy_hit_time(option, buy),
+                "stock_name": stock,
+                "LTP": round(r["ltp"], 2),
+                "change_percent": r["change"],
+                "gainer_loser": side,
+                "option_name": option.replace("NFO:", ""),
+                "current_price": round(current, 2),
+                "buy_price": buy,
+                "qty": qty,
+                "investment": round(investment, 2),
+                "sl_price": sl,
+                "max_loss": round(max_loss, 2),
+                "target_price": target,
+                "net_profit": round(net_profit, 2),
+                "current_pnl": round(current_pnl, 2),
+                "max_profit": round(max_profit, 2),
+                "todays_high": high,
+                "percentage": percent_move,
+                "result": result,
+                "target_hit_time": target_time
+                
+            })
+
+
+            # ✅ freeze row after first ACTIVE/TARGET/SL
+            if result in ["ACTIVE", "TARGET HIT", "SL HIT"]:
+                FROZEN_ROWS[stock] = rows[-1]
+
+        except:
+            pass
+
+    total_trades = target_hit + sl_hit + active
+    win_rate = (target_hit / total_trades * 100) if total_trades > 0 else 0
+
+    #return rows, total, t_inv, t_profit, t_max, gainer, loser, sideways, sentiment, total_trades, target_hit, sl_hit, active, win_rate
+    #return rows, total, t_inv, t_profit, t_max, gainer, loser, sideways, sentiment, total_trades, target_hit, sl_hit, active, win_rate, triggered_count, pending_count, no_trade_count
+    return rows, total, t_inv, t_profit, t_max, gainer, loser, sideways, sentiment, total_trades, target_hit, sl_hit, active, win_rate, triggered_count, pending_count, no_trade_count
+
+
+# ============================================================
+# UI
+# ============================================================
+
+# ---------- UI (UNCHANGED) ----------
+HTML = """
+<html>
+<head>
+<meta http-equiv="refresh" content="3">
+<style>
+body{background:#000;color:#fff;font-family:Arial;}
+
+.center{text-align:center;margin:20px;}
+
+.flash-green{
+    background:#0a5d0a;   /* soft green */
+    animation:none;       /* blink band */
+}
+
+.flash-blue{
+    color:white;
+    background:#2e5f7a;   /* light blue */
+    animation:none;       /* blink band */
+}
+
+
+.flash-red{
+    background:#b33939 !important;   /* ✅ proper visible red */
+    color:white;
+}
+@keyframes blinkBlue{
+    0%{background:#003366;}
+    50%{background:#00bfff;}
+    100%{background:#003366;}
+}
+
+.highlight-col{background-color:#002a34;color:#00ffff;font-weight:bold;}
+
+/*th{background:#001f2b;color:#00ffff;border-bottom:2px solid #00ffff;}*/
+
+th{
+    background:#ffffff;      /* white background */
+    color:#000000;           /* black text */
+    font-weight:bold;        /* bold text */
+    border-bottom:2px solid #000;
+}
+
+@keyframes blinkGreen{0%{background:#006400;}50%{background:#00ff00;}100%{background:#006400;}}
+@keyframes blinkRed{0%{background:#8b0000;}50%{background:#ff0000;}100%{background:#8b0000;}}
+
+table{width:100%;border-collapse:collapse;}
+td,th{border:1px solid #333;padding:5px;}
+</style>
+
+<script>
+
+
+
+function openChart(symbol, exchange){
+
+    symbol = symbol.replace("NFO:", "").replace("NSE:", "");
+
+    let url = "/chart/" + symbol;
+
+    window.open(url, "_blank");
+}
+
+
+</script>
+
+</head>
+
+<body>
+
+<div class="center">
+<h1 style="color:#00ffff;">MONEY ASSURE DASHBOARD</h1>
+<h3>GAINERS: {{g}} | LOSERS: {{l}} | SIDEWAYS: {{s}}</h3>
+<h2 style="color:{% if sentiment=='BULLISH'%}lime{% elif sentiment=='BEARISH'%}red{% else %}yellow{% endif %}">
+MARKET SENTIMENT: {{sentiment}}
+</h2>
+</div>
+
+<h1 style="color:#00ffcc;">TOTAL INVESTED: ₹{{total}}</h1>
+<h2 style="color:yellow;">
+NET PROFIT: ₹{{t_profit}} | INVESTED: ₹{{t_inv}} 
+</h2>
+<h2 style="color:magenta;">MAX PROFIT: ₹{{t_max}}</h2>
+
+
+<div style="position:absolute;top:140px;right:30px;text-align:right;">
+
+<div style="font-size:28px;font-weight:bold;">
+TOTAL TRADES: {{total_trades}}
+</div>
+
+<div style="font-size:26px;font-weight:bold;color:#00ff00;">
+TARGET HIT: {{target_hit}}
+</div>
+
+<div style="font-size:26px;font-weight:bold;color:#ff0000;">
+SL HIT: {{sl_hit}}
+</div>
+
+<div style="font-size:26px;font-weight:bold;color:#ffff00;">
+ACTIVE: {{active}}
+</div>
+
+<div style="font-size:26px;font-weight:bold;">
+NO TRADE: {{no_trade}}
+</div>
+
+<div style="font-size:30px;font-weight:bold;color:#ffcc00;">
+WIN RATE: {{win_rate}}%
+</div>
+
+</div>
+
+<table>
+<tr>{% for c in cols %}<th>{{c}}</th>{% endfor %}</tr>
+
+{% for r in rows %}
+<tr class="
+{% if 'TARGET HIT' in r.result %}
+    flash-green
+{% elif 'SL HIT' in r.result %}
+    flash-red
+{% elif 'ACTIVE' in r.result %}
+    flash-blue
+{% endif %}
+">
+{% for c in cols %}
+<td class="{% if c=='current_pnl' or c=='max_profit' %}highlight-col{% endif %}">
+
+
+    {% if c == 'option_name' and r[c] != '-' %}
+        <span style="cursor:pointer;color:yellow;font-weight:bold;"
+              onclick="openChart('{{r[c]}}','NFO')">
+              {{r[c]}}
+        </span>
+
+    {% elif c == 'stock_name' %}
+        <span style="cursor:pointer;color:#ffff00;font-weight:bold;"
+              onclick="openChart('{{r[c]}}','NSE')">
+              {{r[c]}}
+        </span>
+
+    {% else %}
+        {{r[c]}}
+    {% endif %}
+
+</td>
+
+{% endfor %}
+</tr>
+{% endfor %}
+</table>
+
+</body>
+</html>
+"""
+
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+
+    cols = [
+        "buy_time","target_hit_time","stock_name","LTP","change_percent","gainer_loser","option_name",
+        "current_price","buy_price","qty","investment",
+        "sl_price","max_loss","target_price",
+        "net_profit","current_pnl","max_profit",
+        #"todays_high","result"
+        "todays_high","percentage","result"
+    ]
+
+    #data,total,t_inv,t_profit,t_max,g,l,s,sent,total_trades,target_hit,sl_hit,active,win_rate = generate_rows()
+    #data,total,t_inv,t_profit,t_max,g,l,s,sent,total_trades,target_hit,sl_hit,active,win_rate,triggered,pending,no_trade = generate_rows()
+    #data,total,t_inv,t_profit,t_max,g,l,s,sent,total_trades,target_hit,sl_hit,active,win_rate,*rest = generate_rows()
+    data,total,t_inv,t_profit,t_max,g,l,s,sent,total_trades,target_hit,sl_hit,active,win_rate,*rest = generate_rows()
+    no_trade = rest[-1]
+
+    return render_template_string(
+        HTML,
+        rows=data, 
+        cols=cols,
+        total=round(total,2),
+        t_inv=round(t_inv,2),
+        t_profit=round(t_profit,2),
+        t_max=round(t_max,2),
+
+
+        g=g,l=l,s=s,
+        sentiment=sent,
+        total_trades=total_trades,
+        target_hit=target_hit,
+        sl_hit=sl_hit,
+        active=active,
+        no_trade=no_trade,   # ✅ ADD THIS LINE
+        win_rate=round(win_rate,2)
+    )
+
+
+@app.route("/chart/<symbol>")
+def chart(symbol):
+    try:
+        import pandas as pd
+        import datetime as dt
+        import mplfinance as mpf
+
+        symbol = symbol.replace("NFO:", "").replace("NSE:", "")
+
+        # ✅ exchange detect
+        if "CE" in symbol or "PE" in symbol:
+            full = f"NFO:{symbol}"
+        else:
+            full = f"NSE:{symbol}"
+
+        token = kite.ltp(full)[full]["instrument_token"]
+
+        now = dt.datetime.now(IST)
+        today = now.date()
+        from_dt = dt.datetime(now.year, now.month, now.day, 9, 15)
+
+        data = kite.historical_data(token, from_dt, now, "5minute")
+
+        if not data:
+            return f"No data for {symbol}"
+
+        df = pd.DataFrame(data)
+        df["date"] = pd.to_datetime(df["date"])
+        df.set_index("date", inplace=True)
+
+        # =========================================================
+        # ✅ B1 (9:30 HIGH) and B2 (10:00 HIGH)
+        # =========================================================
+
+
+
+# ✅ GET QUOTE (ADD THIS)
+        quote = kite.quote([full])[full]
+
+
+# ✅ candle find
+        c930 = df[(df.index.hour == 9) & (df.index.minute == 30)]
+        c1000 = df[(df.index.hour == 10) & (df.index.minute == 0)]
+
+# ✅ gainer/loser
+        ltp = quote["last_price"]
+        prev = quote["ohlc"]["close"]
+
+        is_gainer = ltp >= prev
+
+        if is_gainer:
+            b1 = c930["high"].iloc[0] if not c930.empty else None
+            b2 = c1000["high"].iloc[0] if not c1000.empty else None
+
+            label1 = "B1 (9:30 High)"
+            label2 = "B2 (10:00 High)"
+
+            color1 = "red"
+            color2 = "blue"
+
+        else:
+            b1 = c930["low"].iloc[0] if not c930.empty else None
+            b2 = c1000["low"].iloc[0] if not c1000.empty else None
+
+            label1 = "S1 (9:30 Low)"
+            label2 = "S2 (10:00 Low)"
+
+            color1 = "green"
+            color2 = "orange"
+
+
+
+        # =========================================================
+        # ✅ ADD HORIZONTAL LINES
+        # =========================================================
+
+        hlines = []
+        line_colors = []
+
+        if b1:
+            hlines.append(float(b1))
+            line_colors.append(color1)
+
+        if b2:
+            hlines.append(float(b2))
+            line_colors.append(color2)
+
+
+        # =========================================================
+        # ✅ PLOT
+        # =========================================================
+
+        file_path = f"/tmp/{symbol}.png"
+
+        mpf.plot(
+            df,
+            type="candle",
+            style="charles",
+            title=f"{symbol} - 5 Min Chart",
+            volume=True,
+            hlines=hlines,
+            savefig=file_path
+        )
+        mpf.plot(
+            df,
+            type="candle",
+            style="charles",
+            title=f"{symbol} - 5 Min Chart",
+            volume=True,
+            hlines=dict(
+                hlines=hlines,
+                colors=line_colors,
+                linewidths=2
+            ),
+            savefig=file_path
+        )
+
+        # =========================================================
+        # ✅ RETURN IMAGE
+        # =========================================================
+
+        return f'''
+        <html>
+        <body style="background:black;text-align:center;">
+        <h2 style="color:white;">{symbol}</h2>
+
+
+        <p style="color:{color1};font-weight:bold;">
+            {label1}: {round(b1,2) if b1 else "-"}
+        </p>
+
+        <p style="color:{color2};font-weight:bold;">
+            {label2}: {round(b2,2) if b2 else "-"}
+        </p>
+
+        <img src="/img/{symbol}">
+        </body>
+        </html>
+        '''
+
+    except Exception as e:
+        return str(e)
+
+
+@app.route("/img/<symbol>")
+def img(symbol):
+    from flask import send_file
+    return send_file(f"/tmp/{symbol}.png", mimetype="image/png")
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5003)

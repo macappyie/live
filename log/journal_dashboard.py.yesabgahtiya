@@ -1,0 +1,265 @@
+from flask import Flask, render_template_string
+from kiteconnect import KiteConnect
+import pandas as pd
+import datetime as dt
+import pytz
+import json
+import os
+
+# ================= CONFIG =================
+
+API_KEY = "awh2j04pcd83zfvq"
+kite = KiteConnect(api_key=API_KEY)
+
+with open("access_token.txt") as f:
+    kite.set_access_token(f.read().strip())
+
+IST = pytz.timezone("Asia/Kolkata")
+
+with open("watchlist.txt") as f:
+    WATCHLIST = [f"NSE:{x.strip()}" for x in f if x.strip()]
+
+TRADE_BOOK_FILE = "trade_book.json"
+
+# ================= LOAD SAFE =================
+
+try:
+    if os.path.exists(TRADE_BOOK_FILE):
+        with open(TRADE_BOOK_FILE, "r") as f:
+            FROZEN_ROWS = json.load(f)
+    else:
+        FROZEN_ROWS = {}
+except:
+    FROZEN_ROWS = {}
+
+# ================= JSON SAFE =================
+
+def convert_types(obj):
+    if isinstance(obj, dict):
+        return {k: convert_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_types(i) for i in obj]
+    elif hasattr(obj, "item"):  # numpy
+        return obj.item()
+    else:
+        return obj
+
+def save_trade_book():
+    try:
+        with open(TRADE_BOOK_FILE, "w") as f:
+            json.dump(convert_types(FROZEN_ROWS), f, indent=4)
+    except:
+        pass
+
+# ================= GET 9:30 LEVEL =================
+
+def get_930_level(symbol, side):
+
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+
+        from_dt = IST.localize(dt.datetime.combine(dt.date.today(), dt.time(9,15)))
+        to_dt   = IST.localize(dt.datetime.combine(dt.date.today(), dt.time(9,35)))
+
+        df = pd.DataFrame(kite.historical_data(token, from_dt, to_dt, "5minute"))
+
+        if df.empty:
+            return None
+
+        df["date"] = pd.to_datetime(df["date"])
+        df.set_index("date", inplace=True)
+
+        c930 = df[(df.index.hour==9) & (df.index.minute==30)]
+
+        if c930.empty:
+            return None
+
+        if side == "GAINER":
+            return float(c930["high"].iloc[0])
+
+        elif side == "LOSER":
+            return float(c930["low"].iloc[0])
+
+    except:
+        return None
+
+# ================= BREAKOUT CHECK =================
+
+def is_breakout(symbol, side, level):
+
+    try:
+        token = kite.ltp(symbol)[symbol]["instrument_token"]
+
+        from_dt = IST.localize(dt.datetime.combine(dt.date.today(), dt.time(9,30)))
+
+        df = pd.DataFrame(
+            kite.historical_data(token, from_dt, dt.datetime.now(IST), "5minute")
+        )
+
+        if df.empty:
+            return False
+
+        for _, row in df.iterrows():
+
+            if side == "GAINER":
+                if row["close"] > level:
+                    return True
+
+            elif side == "LOSER":
+                if row["close"] < level:
+                    return True
+
+        return False
+
+    except:
+        return False
+
+# ================= MAIN =================
+
+def generate_rows():
+
+    rows = []
+    quotes = kite.quote(WATCHLIST)
+
+    temp = []
+    g=l=s=0
+
+    # ===== MARKET SCAN =====
+    for sym in WATCHLIST:
+        try:
+            q = quotes[sym]
+
+            stock = sym.replace("NSE:", "")
+            ltp  = float(q["last_price"])
+            prev = float(q["ohlc"]["close"])
+
+            change = ((ltp - prev) / prev) * 100
+
+            if change > 0:
+                side = "GAINER"; g+=1
+            elif change < 0:
+                side = "LOSER"; l+=1
+            else:
+                side = "SIDE"; s+=1
+
+            temp.append({
+                "stock": stock,
+                "ltp": ltp,
+                "change": round(change,2),
+                "side": side
+            })
+
+        except:
+            pass
+
+    # ===== TOP 30 =====
+    gainers = sorted([x for x in temp if x["side"]=="GAINER"],
+                     key=lambda x: x["change"], reverse=True)[:30]
+
+    losers = sorted([x for x in temp if x["side"]=="LOSER"],
+                    key=lambda x: abs(x["change"]), reverse=True)[:30]
+
+    final = gainers + losers
+
+    # ===== TRADING =====
+    for r in final:
+
+        stock = r["stock"]
+        side  = r["side"]
+
+        if side == "SIDE":
+            continue
+
+        symbol = f"NSE:{stock}"
+
+        level = get_930_level(symbol, side)
+        if not level:
+            continue
+
+        if not is_breakout(symbol, side, level):
+            continue
+
+        key = f"{stock}_{side}"
+
+        # ✅ already frozen
+        if key in FROZEN_ROWS:
+            rows.append(FROZEN_ROWS[key])
+            continue
+
+        row = {
+            "stock": stock,
+            "side": side,
+            "ltp": r["ltp"],
+            "change": r["change"],
+            "buy_price": round(level,2),
+            "status": "ACTIVE"
+        }
+
+        FROZEN_ROWS[key] = row
+        save_trade_book()
+
+        rows.append(row)
+
+    return rows, g, l, s
+
+# ================= UI =================
+
+HTML = """
+<html>
+<head>
+<meta http-equiv="refresh" content="3">
+<style>
+
+body{background:#000;color:#fff;font-family:Arial;}
+
+.green{background:#00aa00;}
+.red{background:#aa0000;}
+
+table{width:100%;border-collapse:collapse;}
+td,th{border:1px solid #333;padding:6px;text-align:center;}
+
+</style>
+</head>
+<body>
+
+<h2>GAINERS: {{g}} | LOSERS: {{l}}</h2>
+
+<table>
+
+<tr>
+<th>Stock</th>
+<th>Side</th>
+<th>LTP</th>
+<th>%</th>
+<th>Buy Price</th>
+<th>Status</th>
+</tr>
+
+{% for r in rows %}
+<tr class="{% if r.side=='GAINER' %}green{% else %}red{% endif %}">
+<td>{{r.stock}}</td>
+<td>{{r.side}}</td>
+<td>{{r.ltp}}</td>
+<td>{{r.change}}</td>
+<td>{{r.buy_price}}</td>
+<td>{{r.status}}</td>
+</tr>
+{% endfor %}
+
+</table>
+
+</body>
+</html>
+"""
+
+# ================= FLASK =================
+
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+    data, g, l, s = generate_rows()
+    return render_template_string(HTML, rows=data, g=g, l=l)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5003)
